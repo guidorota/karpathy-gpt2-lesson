@@ -6,11 +6,11 @@ from torch.nn import functional as F
 
 @dataclass
 class GPTConfig:
-    block_size: int = 256
-    vocab_size: int = 65
-    n_layer: int = 6
-    n_head: int = 6
-    n_embd: int = 384
+    block_size: int = 1024
+    vocab_size: int = 50257
+    n_layer: int = 12
+    n_head: int = 12
+    n_embd: int = 768
 
 class CausalSelfAttention(nn.Module):
 
@@ -45,7 +45,7 @@ class CausalSelfAttention(nn.Module):
         att = att.masked_fill(self.bias[:,:,:T,:T] == 0, float("-inf"))
         att = F.softmax(att, dim=-1)
         y = att @ v
-        # Combine all heads and project
+        # Concat all heads and project
         y = y.transpose(1, 2).contiguous().view(B, T, C)
         y = self.c_proj(y)
         return y
