@@ -3,6 +3,7 @@ import math
 import torch
 import torch.nn as nn
 import tiktoken
+import time
 from torch.nn import functional as F
 
 @dataclass
@@ -23,6 +24,7 @@ class CausalSelfAttention(nn.Module):
         self.c_attn = nn.Linear(config.n_embd, 3*config.n_embd)
         # projection
         self.c_proj = nn.Linear(config.n_embd, config.n_embd)
+        self.c_proj.NANOGPT_SCALE_INIT = 1
         
         self.n_head = config.n_head
         self.n_embd = config.n_embd
@@ -58,6 +60,7 @@ class MLP(nn.Module):
         self.c_fc = nn.Linear(config.n_embd, 4*config.n_embd)
         self.gelu = nn.GELU(approximate='tanh')
         self.c_proj = nn.Linear(4*config.n_embd, config.n_embd)
+        self.c_proj.NANOGPT_SCALE_INIT = 1
 
     def forward(self, x):
         x = self.c_fc(x)
@@ -95,6 +98,24 @@ class GPT(nn.Module):
 
         # Sharing weights between input embedding and output linear network
         self.transformer.wte.weight = self.lm_head.weight
+
+        # init params by iterating over all sub-modules
+        self.apply(self._init_weights)
+
+    # There's a subtle bug that Karpathy doesn't fix, wte and lm_head
+    # weights are initialized twice, but it's harmless
+    def _init_weights(self, module):
+        std = 0.02
+        if hasattr(module, 'NANOGPT_SCALE_INIT'):
+            # 2 because each transformer layer has 2 residual layers
+            # that add to the residual path, attn and mlp
+            std *= (2 * self.config.n_layer) ** -0.5
+        if isinstance(module, nn.Linear):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=std)
+            if module.bias is not None:
+                torch.nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Embedding):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
     
     def forward(self, idx, targets=None):
         B, T = idx.size()
@@ -195,7 +216,15 @@ max_length = 30
 device = "cuda"
 print(f"using device: {device}")
 
-train_loader = DataLoaderLite(B=4, T=32, device=device)
+torch.manual_seed(1337)
+torch.cuda.manual_seed(1337)
+
+n_batch = 4
+batch_size = 1024
+
+train_loader = DataLoaderLite(B=n_batch, T=batch_size, device=device)
+
+torch.set_float32_matmul_precision("high") # Set FT32 precision
 
 # model = GPT.from_pretrained('gpt2')
 model = GPT(GPTConfig())
@@ -207,12 +236,26 @@ model.to(device)
 # print(loss)
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)
+dts = []
+tpss = []
 for i in range(50):
+    t0 = time.time()
     x, y = train_loader.next_batch()
     optimizer.zero_grad()
     logits, loss = model(x, y)
     loss.backward()
     optimizer.step()
-    print(f"step {i}, loss: {loss.item()}")
+    torch.cuda.synchronize() # Ensure GPU work is complete
+    t1 = time.time()
+    dt = (t1 - t0)*1000
+    tps = (n_batch * batch_size)/(t1 - t0)
+    if i != 0: # Runtime of the first iteration is an outlier
+        dts.append(dt)
+        tpss.append(tps)
+    print(f"step {i}, loss: {loss.item()}, dt: {dt:.2f}ms, tps: {tps:.2f}")
+
+mean_time = sum(dts) / len(dts)
+mean_tps = sum(tpss) / len(tpss)
+print(f"mean per iter: {mean_time:.2f}ms, mean tps: {mean_tps:.2f}")
 
 import sys; sys.exit(0)
