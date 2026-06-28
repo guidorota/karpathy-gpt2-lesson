@@ -15,3 +15,12 @@ With TF32:
 * 10 batches @ 1024 tokens TF32: mean per iter: 328.97ms, mean tps: 31127.51
 * 8 batches @ 1024 tokens TF32: mean per iter: 262.71ms, mean tps: 31182.58
 * 4 batches @ 1024 tokens TF32: mean per iter: 139.62ms, mean tps: 29335.79
+
+The low TPS at 4 batches could be due to under-utilization: memory utilization (read/write, not allocation) is at 86% at 4 batches, 96% at 8 batches, and 100% at 10 batches. This also indicates that we're memory bound at 10 batches.
+
+With BF16 (forward and loss only)
+* 10 batches @ 1024 tokens BF16: mean per iter: 253.65ms, mean tps: 40370.40
+* 8 batches @ 1024 tokens BF16: mean per iter: 203.31ms, mean tps: 40292.21
+* 4 batches @ 1024 tokens BF16: mean per iter: 108.48ms, mean tps: 37756.75
+
+Similarly to what Karpathy's experiencing on his (A100?) GPU, we're also bound by memory bandwidth, as we're not quite getting 2x of TF32 when using BF16 (datasheet mentions peak TFLOPS for FT32 = 82.6, and BF16 = 165.2).

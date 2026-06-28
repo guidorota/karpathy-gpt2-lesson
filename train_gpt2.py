@@ -242,7 +242,13 @@ for i in range(50):
     t0 = time.time()
     x, y = train_loader.next_batch()
     optimizer.zero_grad()
-    logits, loss = model(x, y)
+
+    # BFLOAT16 means we don't need to use gradient scalers,
+    # which would otherwise be required if using FLOAT26, which reduces
+    # the number of bits reserved for the exponent
+    with torch.autocast(device_type=device, dtype=torch.bfloat16):
+        logits, loss = model(x, y)
+
     loss.backward()
     optimizer.step()
     torch.cuda.synchronize() # Ensure GPU work is complete
