@@ -2,6 +2,7 @@ from dataclasses import dataclass
 import math
 import torch
 import torch.nn as nn
+import tiktoken
 from torch.nn import functional as F
 
 @dataclass
@@ -91,6 +92,9 @@ class GPT(nn.Module):
             ln_f = nn.LayerNorm(config.n_embd),
         ))
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+
+        # Sharing weights between input embedding and output linear network
+        self.transformer.wte.weight = self.lm_head.weight
     
     def forward(self, idx, targets=None):
         B, T = idx.size()
@@ -156,6 +160,34 @@ class GPT(nn.Module):
 
         return model
     
+class DataLoaderLite:
+
+    def __init__(self, B, T, device):
+        self.B = B
+        self.T = T
+        self.device = device
+
+        with open("tiny-shakespeare.txt", "r") as f:
+            text = f.read()
+        enc = tiktoken.get_encoding("gpt2")
+        tokens = enc.encode(text)
+        self.tokens = torch.tensor(tokens)
+        print(f"loaded {len(self.tokens)} tokens")
+        print(f"1 epoch = {len(self.tokens) // (B*T)} batches")
+
+        self.current_position = 0
+
+    def next_batch(self):
+        B, T = self.B, self.T
+        buf = self.tokens[self.current_position : self.current_position+B*T+1]
+        x = (buf[:-1]).view(B, T)
+        y = (buf[1:]).view(B, T)
+        self.current_position += B*T
+        if self.current_position + (B*T+1) > len(self.tokens):
+            self.current_position = 0
+        x = x.to(device)
+        y = y.to(device)
+        return x, y
 
 num_return_sequences = 5
 max_length = 30
@@ -163,16 +195,7 @@ max_length = 30
 device = "cuda"
 print(f"using device: {device}")
 
-import tiktoken
-enc = tiktoken.get_encoding("gpt2")
-with open("tiny-shakespeare.txt", "r") as f:
-    text = f.read()
-text = text[:1000]
-tokens = enc.encode(text)
-B, T = 4, 32
-buf = torch.tensor(tokens[:B*T+1], device=device)
-x = buf[:-1].view(B, T)
-y = buf[1:].view(B, T)
+train_loader = DataLoaderLite(B=4, T=32, device=device)
 
 # model = GPT.from_pretrained('gpt2')
 model = GPT(GPTConfig())
@@ -185,6 +208,7 @@ model.to(device)
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)
 for i in range(50):
+    x, y = train_loader.next_batch()
     optimizer.zero_grad()
     logits, loss = model(x, y)
     loss.backward()
