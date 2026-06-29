@@ -135,7 +135,7 @@ class GPT(nn.Module):
 
         loss = None
         if targets is not None:
-            loss = F.cross_entropy(logits.view(B*T, self.config.vocab_size), targets.view(B*T))
+            loss = F.cross_entropy(logits.view(B*T, self.config.vocab_size), targets.view(B*T), reduction='mean')
         return logits, loss
 
     @classmethod
@@ -247,10 +247,15 @@ print(f"using device: {device}")
 torch.manual_seed(1337)
 torch.cuda.manual_seed(1337)
 
-n_batch = 17
-batch_size = 1024
+total_batch_size = 524288 # 2**19, ~0.5M tokens, power of twos
+B = 16 # micro batch size
+T = 1024 # sequence length
+assert total_batch_size % (B*T) == 0, "make sure total_batch_size is divisible by B*T"
+grad_accum_step = total_batch_size // (B*T)
+print(f"total desired batch size: {total_batch_size}")
+print(f"=> calculated gradient accumulation step: {grad_accum_step}")
 
-train_loader = DataLoaderLite(B=n_batch, T=batch_size, device=device)
+train_loader = DataLoaderLite(B=B, T=T, device=device)
 
 torch.set_float32_matmul_precision("high") # Set FT32 precision
 
@@ -289,16 +294,27 @@ dts = []
 tpss = []
 for step in range(max_steps):
     t0 = time.time()
-    x, y = train_loader.next_batch()
     optimizer.zero_grad()
 
-    # BFLOAT16 means we don't need to use gradient scalers,
-    # which would otherwise be required if using FLOAT26, which reduces
-    # the number of bits reserved for the exponent
-    with torch.autocast(device_type=device, dtype=torch.bfloat16):
-        logits, loss = model(x, y)
+    # Gradient accumulation to simulate a batch size
+    # that's larger than what our GPU can process in memory
+    loss_accum = 0.0
+    for micro_step in range(grad_accum_step):
+        x, y = train_loader.next_batch()
+        # BFLOAT16 means we don't need to use gradient scalers,
+        # which would otherwise be required if using FLOAT26, which reduces
+        # the number of bits reserved for the exponent
+        with torch.autocast(device_type=device, dtype=torch.bfloat16):
+            logits, loss = model(x, y)
+        # Required to calculate the correct loss when doing
+        # gradient accumulation, gives us the same mean as what we
+        # would get if we processed in a single batch
+        loss = loss / grad_accum_step
+        loss.backward()
+        # loss_accum is only used for printing, hence why detach makes sense
+        # prevents memory leaks and unnecessary grad graph growth
+        loss_accum += loss.detach()
 
-    loss.backward()
     norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
 
     lr = get_lr(step)
@@ -309,11 +325,11 @@ for step in range(max_steps):
     torch.cuda.synchronize() # Ensure GPU work is complete
     t1 = time.time()
     dt = (t1 - t0)*1000
-    tps = (n_batch * batch_size)/(t1 - t0)
+    tps = (B * T * grad_accum_step)/(t1 - t0)
     if step != 0: # Runtime of the first iteration is an outlier
         dts.append(dt)
         tpss.append(tps)
-    print(f"step {step:4d}, loss: {loss.item()}, norm: {norm:.4f}, lr: {lr:.4e}, dt: {dt:.2f}ms, tps: {tps:.2f}")
+    print(f"step {step:4d}, loss: {loss_accum.item()}, norm: {norm:.4f}, lr: {lr:.4e}, dt: {dt:.2f}ms, tps: {tps:.2f}")
 
 mean_time = sum(dts) / len(dts)
 mean_tps = sum(tpss) / len(tpss)
