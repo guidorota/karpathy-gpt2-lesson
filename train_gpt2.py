@@ -222,7 +222,7 @@ print(f"using device: {device}")
 torch.manual_seed(1337)
 torch.cuda.manual_seed(1337)
 
-n_batch = 16
+n_batch = 17
 batch_size = 1024
 
 train_loader = DataLoaderLite(B=n_batch, T=batch_size, device=device)
@@ -230,16 +230,39 @@ train_loader = DataLoaderLite(B=n_batch, T=batch_size, device=device)
 torch.set_float32_matmul_precision("high") # Set FT32 precision
 
 # model = GPT.from_pretrained('gpt2')
-model = GPT(GPTConfig())
+# Override vocab_size for a number that can be
+# divided by more power of twos.
+#
+# We're essentially adding tokens that are never
+# going to be used, and that will be driven to prob=0
+# during training.
+model = GPT(GPTConfig(vocab_size=50304))
 model.to(device)
 print("compiling model...")
 model = torch.compile(model)
 print("finished compiling model")
 
-optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)
+max_lr = 6e-4
+min_lr = max_lr * 0.1
+warmup_steps = 10
+max_steps = 50
+def get_lr(step):
+    # Linear warmup
+    if step < warmup_steps:
+        return max_lr * (step + 1) / warmup_steps # +1 because lr = 0 would be useless
+    # Min learning rate if over decay threshold
+    if step > max_steps:
+        return min_lr
+    # Cosine decay
+    decay_ratio = (step - warmup_steps) / (max_steps - warmup_steps)
+    assert 0 <= decay_ratio <= 1
+    coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))
+    return min_lr + coeff * (max_lr - min_lr)
+
+optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4, betas=(0.9, 0.95), eps=1e-8)
 dts = []
 tpss = []
-for i in range(50):
+for step in range(max_steps):
     t0 = time.time()
     x, y = train_loader.next_batch()
     optimizer.zero_grad()
@@ -251,15 +274,21 @@ for i in range(50):
         logits, loss = model(x, y)
 
     loss.backward()
+    norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+
+    lr = get_lr(step)
+    for param_group in optimizer.param_groups:
+        param_group['lr'] = lr
+
     optimizer.step()
     torch.cuda.synchronize() # Ensure GPU work is complete
     t1 = time.time()
     dt = (t1 - t0)*1000
     tps = (n_batch * batch_size)/(t1 - t0)
-    if i != 0: # Runtime of the first iteration is an outlier
+    if step != 0: # Runtime of the first iteration is an outlier
         dts.append(dt)
         tpss.append(tps)
-    print(f"step {i}, loss: {loss.item()}, dt: {dt:.2f}ms, tps: {tps:.2f}")
+    print(f"step {step:4d}, loss: {loss.item()}, norm: {norm:.4f}, lr: {lr:.4e}, dt: {dt:.2f}ms, tps: {tps:.2f}")
 
 mean_time = sum(dts) / len(dts)
 mean_tps = sum(tpss) / len(tpss)

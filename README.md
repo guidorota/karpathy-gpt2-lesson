@@ -44,4 +44,13 @@ It's likely there is more room for improvement since memory utilization is not m
 * 17 batches @ 1024 tokens: mean per iter: 137.12ms, mean tps: 126958.62
 * 16 batches @ 1024 tokens: mean per iter: 133.59ms, mean tps: 122648.53
 
-TPS is still higher with 17 batches even when introducing flash attention.
+TPS is still higher with 17 batches even when introducing flash attention, even if it's a prime number instead of being a power of 2.
+
+### Rounding numbers up to power of twos
+
+vocab_size 50257 -> 50304
+
+* 17 batches @ 1024 tokens: mean per iter: 136.33ms, mean tps: 127701.01
+* 16 batches @ 1024 tokens: mean per iter: 128.66ms, mean tps: 127341.65
+
+Using numbers that are close to power of twos allows us to make the best of most cuda kernels, which are optimised for running operations on data sizes that are power of twos.
