@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 import tiktoken
 import time
+import inspect
 from torch.nn import functional as F
 
 @dataclass
