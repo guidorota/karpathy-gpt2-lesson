@@ -54,3 +54,26 @@ vocab_size 50257 -> 50304
 * 16 batches @ 1024 tokens: mean per iter: 128.66ms, mean tps: 127341.65
 
 Using numbers that are close to power of twos allows us to make the best of most cuda kernels, which are optimised for running operations on data sizes that are power of twos.
+
+## Gradient accumulation
+
+### Karpathy's settings
+
+* total_batch_size = 524288 # 2**19, ~0.5M tokens, power of twos
+* B = 16 # micro batch size
+* T = 1024 # sequence length
+
+Unfortunately with only 24GB or VRAM I am not able to step up to B=32, so I'll need to try something different.
+
+### My settings to maximise memory usage
+
+* total_batch_size = 1024*30*18
+* B = 30 # micro batch size
+* T = 1024 # sequence length
+
+### TPS comparison
+
+* Karpathy's settings: mean per iter: 3873.78ms, mean tps: 135343.18
+* My settings: mean per iter: 4010.69ms, mean tps: 137872.00
+
+Even though it's not a perfect power of 2, 30 batch size still results in a 1.8% increase in tps.
