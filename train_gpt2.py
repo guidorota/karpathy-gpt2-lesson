@@ -43,11 +43,14 @@ class CausalSelfAttention(nn.Module):
         k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
         q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
+        
         # Perform attention for each head
-        att = (q @ k.transpose(-1, -2)) * (1.0 / math.sqrt(k.size(-1)))
-        att = att.masked_fill(self.bias[:,:,:T,:T] == 0, float("-inf"))
-        att = F.softmax(att, dim=-1)
-        y = att @ v
+        # att = (q @ k.transpose(-1, -2)) * (1.0 / math.sqrt(k.size(-1)))
+        # att = att.masked_fill(self.bias[:,:,:T,:T] == 0, float("-inf"))
+        # att = F.softmax(att, dim=-1)
+        # y = att @ v
+        y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+
         # Concat all heads and project
         y = y.transpose(1, 2).contiguous().view(B, T, C)
         y = self.c_proj(y)
@@ -219,7 +222,7 @@ print(f"using device: {device}")
 torch.manual_seed(1337)
 torch.cuda.manual_seed(1337)
 
-n_batch = 4
+n_batch = 16
 batch_size = 1024
 
 train_loader = DataLoaderLite(B=n_batch, T=batch_size, device=device)
@@ -229,11 +232,9 @@ torch.set_float32_matmul_precision("high") # Set FT32 precision
 # model = GPT.from_pretrained('gpt2')
 model = GPT(GPTConfig())
 model.to(device)
-#logits, loss = model(x, y)
-# good loss expected at initialization is ~10.8,
-# as that's the loss we would get if all vocabulary
-# tokens were equally probable (ln(1/vocab_size))
-# print(loss)
+print("compiling model...")
+model = torch.compile(model)
+print("finished compiling model")
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)
 dts = []
