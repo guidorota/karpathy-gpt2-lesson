@@ -2,6 +2,8 @@
 
 Code created while following Karpathy's "Let's reproduce GPT-2 (124M)" lesson.
 
+Run with `uv run torchrun --standalone --nproc_per_node=1 train_gpt2.py`.
+
 ## Optimising training runtime
 
 * 16 batches @ 1024 tokens doesn't fit in 24GB of memory on 4090, 10 batches is the max (22676MiB used), afterwards we get an OOM.
