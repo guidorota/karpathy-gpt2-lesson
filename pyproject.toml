@@ -5,7 +5,11 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
+    "datasets>=5.0.0",
+    "dotenv>=0.9.9",
+    "multiprocess>=0.70.19",
     "tiktoken>=0.13.0",
     "torch>=2.12.1",
+    "tqdm>=4.68.3",
     "transformers>=5.12.1",
 ]
