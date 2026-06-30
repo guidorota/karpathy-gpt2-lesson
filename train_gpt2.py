@@ -292,14 +292,18 @@ torch.manual_seed(1337)
 torch.cuda.manual_seed(1337)
 
 # Karpathy's
-total_batch_size = 524288 # 2**19, ~0.5M tokens, power of twos
-B = 16 # micro batch size
-T = 1024 # sequence length
+# total_batch_size = 524288 # 2**19, ~0.5M tokens, power of twos
+# B = 16 # micro batch size
+# T = 1024 # sequence length
+# warmup_steps = 715
+# max_steps = 19073
 
 # Mine to maximise memory usage
-# total_batch_size = 1024*30*18
-# B = 30 # micro batch size
-# T = 1024 # sequence length
+total_batch_size = 1024*30*18
+B = 30 # micro batch size
+T = 1024 # sequence length
+warmup_steps = 678
+max_steps = 18084
 
 assert total_batch_size % (B*T*ddp_world_size) == 0, "make sure total_batch_size is divisible by B*T*ddp_world_size"
 grad_accum_steps = total_batch_size // (B*T*ddp_world_size)
@@ -324,8 +328,6 @@ model = torch.compile(model)
 
 max_lr = 6e-4
 min_lr = max_lr * 0.1
-warmup_steps = 715
-max_steps = 19073
 def get_lr(step):
     # Linear warmup
     if step < warmup_steps:
